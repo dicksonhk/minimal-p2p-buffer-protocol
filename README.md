@@ -1,5 +1,7 @@
 # minimal-p2p-buffer-protocol - a Minimalistic P2P Serverless Communication Protocol
 
+**Protocol Version: 0**
+
 ## Overview
 
 This document outlines a communication protocol for serverless peer-to-peer (P2P) systems. The protocol is **designed to be minimalistic and highly scalable**, particularly for scenarios involving a **massive number of concurrent communication channels, each typically involving 0-2 active peers**. Key to its scalability is the focus on P2P interactions and the expectation of **per-tenant/per-channel data partitioning** on the buffering peers.
@@ -13,6 +15,23 @@ The protocol aims to be:
 While P2P chat serves as an intuitive primary use case for illustration, the protocol's core design allows it to also serve as a foundation for simple pub/sub systems or job queues. The design prioritizes **P2P communication**, where one peer can act as a message buffer for another. It supports **message buffering** with Time-to-Live (TTL) and aims for **at-least-once message delivery**, with message deletion from the buffer upon acknowledgment or TTL expiry.
 
 In this protocol, "client" refers to the peer initiating an operation or receiving a pushed message, and "server" refers to its counterpart peer that is currently storing or relaying messages for it.
+
+## Document Versioning and Repository Structure
+
+This document (the main `README.md`) describes **Protocol Version 0**, as indicated at the top.
+
+To facilitate access to different protocol versions and allow implementations to support them, the repository containing this specification should be structured as follows:
+
+-   **`/README.md`**: This file, always reflecting the latest stable/recommended version of the protocol.
+-   **`/versions/`**: A directory containing subdirectories for each distinct, published protocol version.
+    -   **`/versions/v0/`**:
+        -   `README.md`: The complete protocol specification document specific to version 0.
+        -   Potentially: `examples/`, `test-vectors/` specific to version 0.
+    -   **`/versions/vX/`**: (For future versions like v1, v2, etc.)
+        -   `README.md`: Specification for that version.
+        -   ...
+
+Implementers wishing to support multiple protocol versions can refer to the specific `README.md` within each versioned directory.
 
 ## Features
 
@@ -71,17 +90,17 @@ The protocol is built around these fundamental operations:
 ### General Expected Peer Behaviors (Client & Server)
 
 -   **Local Message Copies:**
-    -   **Server (Buffering Peer):** MUST keep messages in its buffer for at least their defined TTL or until acknowledged by the recipient (via `MSG_ACK` following a `PUSH_MSG` or `GET_MSG_ACK`).
+    -   **Server (Buffering Peer):** MUST keep messages in its buffer for at least their defined TTL or until acknowledged by the recipient (via `MSG_ACK` following a `MSG` or `GET_MSG_ACK`).
     -   **Client Peer:** SHOULD maintain its own local copy/history of sent and received messages.
 -   **Good Actor Assumption:** The protocol design assumes peers are generally cooperative. Security measures are layered on top.
--   **Handling of Empty Message Data:** Peers SHOULD ignore `PUSH_MSG`, `GET_MSG_ACK`, or `PUT_MSG` packets where the `data` field is empty, unless explicitly meaningful for the application.
+-   **Handling of Empty Message Data:** Peers SHOULD ignore `MSG`, `GET_MSG_ACK`, or `PUT_MSG` packets where the `data` field is empty, unless explicitly meaningful for the application.
 -   **Idempotency:**
     -   **Client (`PUT_MSG`):** Must generate a unique `idempotency_key` for each new message submission.
     -   **Server (`PUT_MSG`):** Must use the `idempotency_key` to prevent duplicate message storage from retried `PUT_MSG` requests.
 -   **Acknowledgments (`MSG_ACK`, `PUT_MSG_ACK`, `GET_MSG_ACK`, `LIST_MSG_ACK`):** These packets always signify success for the corresponding operation. Errors are reported via `NACK`.
-    -   **Client:** Must send `MSG_ACK` upon successful receipt of `PUSH_MSG` or `GET_MSG_ACK`.
+    -   **Client:** Must send `MSG_ACK` upon successful receipt of `MSG` or `GET_MSG_ACK`.
     -   **Server:** Must send `PUT_MSG_ACK` upon successful storage of `PUT_MSG`. Must send `GET_MSG_ACK` upon successful retrieval for `GET_MSG`. Must send `LIST_MSG_ACK` upon successful listing for `LIST_MSG`.
--   **Duplicate/Out-of-Order Messages:** Client applications must be prepared to handle duplicate or out-of-order `PUSH_MSG` packets (e.g., by checking `message_id` against local history).
+-   **Duplicate/Out-of-Order Messages:** Client applications must be prepared to handle duplicate or out-of-order `MSG` packets (e.g., by checking `message_id` against local history).
 -   **PING/PONG Behavior:**
     -   Both client and server MUST implement the ability to send and respond to PING/PONG packets.
     -   Any peer can send a `PING`.
@@ -138,14 +157,32 @@ A critical design aspect for achieving scalability with a massive number of conc
     );
     ```
 
-### Protocol Versioning and Handshake
+### Protocol Versioning, Handshake, and Backwards Compatibility
 
-To ensure interoperability, allow for future evolution, and provide flexibility:
+#### 1. Protocol Version Identification
 
-1.  **Protocol Versioning:** Implementations SHOULD establish the protocol version during an initial handshake.
-2.  **Negotiation for Non-Standard Packet Types:** If peers intend to use non-standard packet types (`PacketType` values 128-254), their usage and meaning MUST be negotiated during the handshake. Standard packet types (0-127 and 255) do not require explicit negotiation beyond establishing a compatible protocol version.
-3.  **Message Format Negotiation (Optional):** The handshake _can_ also be used to negotiate alternative message encoding formats if desired.
-4.  **Consistency & Handshake Mechanism:** If an alternative encoding is used, the logical structure of packets should remain consistent. The handshake mechanism itself is outside this core protocol definition.
+-   This document describes **Protocol Version 0** (the initial version).
+-   Each distinct version of this protocol specification will have a unique, non-negative integer version number. Future versions will increment this number (e.g., 1, 2, 3...).
+
+#### 2. Handshake for Version Negotiation
+
+-   As stated previously, implementations **SHOULD** establish the protocol version being used during an initial handshake between peers.
+-   The client typically initiates by stating the highest protocol version it supports (e.g., sending its supported version number).
+-   The server responds with the protocol version it will use for the session, which should be less than or equal to the version the client offered and the highest version the server itself supports.
+-   If no common version can be agreed upon, the connection should be terminated gracefully (e.g., server sends a `NACK` with `original_packet_type = 0xFF`, `error_code = 0x01` (Version Mismatch), then closes).
+
+#### 3. Handling Different Versions
+
+-   Implementations supporting a newer protocol version SHOULD be capable of gracefully handling interactions with peers that only support older versions, typically by restricting communication to the features and packet types defined in the older, common version agreed upon during the handshake.
+-   Peers should gracefully ignore unknown standard packet types from newer versions if they adhere to the "drop unrecognized packet" rule, assuming the handshake has established an older common version.
+
+#### 4. Negotiation for Non-Standard Packet Types
+
+-   If peers intend to use non-standard packet types (`PacketType` values 128-254), their usage and meaning MUST be negotiated during the handshake, independently of the core protocol version.
+
+#### 5. Message Format Negotiation (Optional)
+
+-   The handshake _can_ also be used to negotiate alternative message encoding formats if desired.
 
 ### Out-of-Scope for this Core Protocol
 
@@ -164,6 +201,65 @@ To maintain its minimalistic nature, the following are considered outside the di
     -   Detailed security patterns are outside this document.
 -   **Peer Discovery & Connection Management:** Handled externally.
 -   **Snowflake IDs:** Recommended for `message_id` for uniqueness and embedded timestamp.
+
+## Deployment and Operational Considerations
+
+While the protocol itself defines the communication rules, the following deployment and operational practices are strongly recommended to ensure reliability, maintainability, and align with the core design principles of the system. This approach leverages DNS for routing and enables advanced operational patterns.
+
+### 1. Versioned and Variant-Specific Endpoints via DNS
+
+-   **Endpoint Naming Convention (Specific Revisions):** Server endpoints **MUST** embed the protocol version, a specific revision/build identifier, and transport directly into a **single DNS label** which forms the subdomain of the service's primary domain. If an alternative message encoding format (other than the default binary wire format) is used, the message format identifier is appended. The path component of the URL should remain consistent.
+
+    -   **Structure of the DNS Label:**
+        -   For Default Binary Wire Format: `[version]-[revision]-[transport]` (3 components, 2 dashes)
+        -   For Alternative Message Format: `[version]-[revision]-[transport]-[messageformat]` (4 components, 3 dashes)
+    -   **Full Domain Structure:**
+
+        -   Default: `[version]-[revision]-[transport].your-service-domain.com`
+        -   Alternative: `[version]-[revision]-[transport]-[messageformat].your-service-domain.com`
+
+    -   **Components within the Label:**
+        -   **`[version]`**: The core protocol version (e.g., `v0`, `v1`). **Mandatory.**
+        -   **`[revision]`**: A specific revision, build number, or patch identifier (e.g., `r1`, `b1023`, `v0patch1` where `v0` is the version and `patch1` is the revision detail). **Mandatory for specific, stable deployments.**
+        -   **`[transport]`**: The underlying transport protocol (e.g., `wss` for WebSocket Secure, `ws` for WebSocket, `tcp`). **Mandatory.**
+        -   **`[messageformat]`**: (Only present if not using the default binary wire format, indicated by being the 4th component with 3 dashes total). Identifier for the alternative message encoding format (e.g., `json`).
+
+-   **Optional "Latest Revision" Alias Endpoints:** For convenience during development or for non-critical applications, an alias subdomain (again, a single DNS label) pointing to the latest known stable revision of a given version _may_ be provided. This follows the same component and dash count logic.
+
+    -   **Alias for Default Binary Wire Format:**
+        -   DNS Label: `[version]-latest-[transport]`
+        -   Full Domain: `[version]-latest-[transport].your-service-domain.com`
+    -   **Alias for Alternative Message Format:**
+        -   DNS Label: `[version]-latest-[transport]-[messageformat]`
+        -   Full Domain: `[version]-latest-[transport]-[messageformat].your-service-domain.com`
+    -   Example: `v0-latest-wss.your-service-domain.com` (default format) or `v0-latest-wss-json.your-service-domain.com` (JSON format).
+    -   **Usage Warning:** Using these "latest" alias endpoints is **NOT RECOMMENDED for critical deployments or production applications where stability and predictable behavior are paramount.** Critical systems should always target specific revision subdomains.
+
+-   **Single-Level Subdomain Requirement:** The entire version/variant identifier string (e.g., `v0-r1-wss` or `v0-r1patch1-wss-json`) **MUST** form a single DNS label. This results in a single-level subdomain relative to `your-service-domain.com`.
+
+    -   **Rationale:** Constructing the version/variant identifier as a single DNS label ensures broad compatibility with diverse DNS providers and hosting platforms. This structure also greatly simplifies the issuance and management of wildcard TLS certificates (e.g., `*.your-service-domain.com`), as a single certificate can effectively secure all such versioned endpoints. Adherence to this single-label approach promotes straightforward DNS configuration and supports a wider range of compatible infrastructure.
+    -   Correct Example (Specific Revision, Default Format): `v0-r1patch1-wss.minimal-p2p-buffer-protocol.example.com`
+    -   Correct Example (Specific Revision, JSON Format): `v0-r1-wss-json.minimal-p2p-buffer-protocol.example.com`
+    -   Correct Example (Latest Alias, Default Format): `v0-latest-wss.minimal-p2p-buffer-protocol.example.com`
+
+-   **Path Consistency:** The URL path (e.g., `/channel-xyz`) should remain consistent for clients, with the version/variant differentiation handled entirely by the single-label subdomain.
+
+### 2. DNS-Level Routing and Operational Benefits
+
+-   **Distinct Deployments:** Each unique specific revision subdomain points to a distinct, independent service deployment. "Latest" aliases point to one of these specific revision deployments.
+-   **Wildcard Certificates:** When using TLS (e.g., for `wss`), a wildcard certificate for `*.your-service-domain.com` can secure all these dynamically created versioned/variant endpoints, simplifying certificate management due to the single-level subdomain structure.
+-   **Hot Swapping / Critical Fixes:** A new deployment with a critical fix for a revision (e.g., `v0-r1`) would be deployed with an updated revision identifier (e.g., `v0-r1p1` or `v0-r2`). Client configurations targeting specific revisions would need to be updated. If a "latest" alias is used, it would be updated to point to the new patched revision.
+-   **Incremental Rollouts / Canary Releases:** New specific revisions can be introduced. Clients targeting specific revisions are unaffected. A small percentage of clients can be directed to them for testing.
+-   **Enhanced Reliability & No Rollback Hell:** As older specific revision endpoints remain operational, issues in a new deployment do not affect existing users on stable, pinned revisions.
+-   **Explicit Client Choice:** Clients targeting specific revision subdomains have a clear, unchanging contract. Clients opting for "latest" aliases accept the risk of the underlying target changing.
+
+### 3. Managing Old Versions
+
+-   **Keep Old Specific Revision Endpoints Running:** Given that deployments are lightweight and can scale to zero, keep older, stable specific revision endpoints operational.
+-   **Resource Management for Old Versions:** Apply more aggressive resource limits to older, less-used deployments if necessary.
+-   **Deprecation Strategy:** Communicate a clear deprecation timeline for retiring old specific revision endpoints. "Latest" aliases should always point to a supported, stable revision.
+
+This DNS-centric deployment strategy, with mandatory revisions for stable deployments and optional "latest" aliases for flexibility, offers a robust framework for managing the lifecycle of services built with this protocol.
 
 ## Default Wire Format Specification
 
@@ -192,6 +288,7 @@ All communication occurs via packets (byte arrays). **It is assumed that the tra
 ### Packet Types (`PacketType`)
 
 ```c
+// Protocol Version: 0
 enum PacketType {
     // LSB=0 for request, LSB=1 for acknowledgment
     PING = 0,         // Liveness Check (Request)
@@ -340,7 +437,7 @@ struct ListMessages {
 
 -   Response to `LIST_MSG` (Type 8) on success. Errors via `NACK` (Type 255).
 
-```
+```c
 struct ListMessagesAck {
     uint64_t message_id[];    // (n * 8 bytes) Array of message IDs.
 };
@@ -361,6 +458,8 @@ struct NackPacket {
                                    // If original_packet_type is 0xFF:
                                    //   0x00: Graceful disconnect signal.
                                    //   0xFF: Critical error / Abort signal.
+                                   // If original_packet_type refers to a specific request
+                                   // (e.g., PUT_MSG), this code is context-specific.
     char     correlation_data[];   // (Variable bytes) Optional. Data to correlate
                                    // NACK to original request (e.g., idempotency_key,
                                    // message_id).
