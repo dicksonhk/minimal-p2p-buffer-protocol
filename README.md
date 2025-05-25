@@ -1,10 +1,12 @@
 # Axon Messaging Protocol - A Minimalist Design for Reliable and Scalable Mediated Client Channels
 
-Protocol Version: 0
+- **Protocol Version**: 0
+- **Status**: `DRAFT`
+- **Updated**: 2025-05-25T19:05:00Z
 
 ## 1. Overview
 
-This document outlines the **Axon Messaging Protocol** (or **Axon Protocol**), a communication system designed to leverage the strengths and characteristics of **serverless architectures** for its relaying components. The protocol facilitates communication **Channels** that are conceptually one-to-one between two end-**Clients**. These two **Clients** individually connect to an intermediary component, termed the **Axon Relay**, which acts as a message buffer and relay for their shared **Channel**. The Axon Protocol offers modes for reliable, buffered message delivery with **at-least-once semantics**, as well as options for direct, non-persistent relay. It is optimized for scenarios where an Axon Relay mediates communication for a pair of Clients.
+This document outlines the **Axon Messaging Protocol** (or Axon Protocol), a communication system designed to leverage the strengths and characteristics of **serverless architectures** for its relaying components. The protocol facilitates communication **Channels** that are conceptually one-to-one between two end-**Clients**. These two **Clients** individually connect to an intermediary component, termed the **Axon Relay**, which acts as a message buffer and relay for their shared **Channel**. The Axon Protocol offers modes for reliable, buffered message delivery with **at-least-once semantics**, as well as options for direct, non-persistent relay. It is optimized for scenarios where an Axon Relay mediates communication for a pair of Clients.
 
 The protocol is **designed to be minimalistic, fostering reliability and high scalability**, particularly for scenarios involving a **massive number of concurrent Channels, each typically involving two active Clients and a mediating Axon Relay instance**. Key to its scalability is this focus on small, independent Channels and the expectation of **per-tenant/per-channel data partitioning** within the Axon Relay's backend. Its reliability is further supported by mechanisms for at-least-once delivery (for buffered messages) and acknowledged message handling. This design was initially inspired by and intended for environments like Cloudflare Workers utilizing Durable Objects for the Axon Relay's buffer storage, but it is adaptable to other serverless platforms and partitioned storage solutions.
 
@@ -53,7 +55,7 @@ Implementers wishing to support multiple protocol versions can refer to the spec
 - **Connection Liveness:** Essential `PING`/`PONG` mechanism between Clients and Axon Relays with defined behaviors.
 - **Unified Error Handling:** Dedicated `NACK` packet for reporting errors and connection status signals with standardized error codes.
 - **Extensibility:** Convention for non-standard packet types and negotiation via handshake for optional features and custom extensions.
-- **Simple and Compact Default Wire Format:** Easy to parse and generate, minimizing bandwidth.
+- **Simple and Compact Wire Format:** Easy to parse and generate; minimizing bandwidth, code complexity and resource usage.
 
 ## 4. System Design and Behavior
 
@@ -160,7 +162,7 @@ This mode requires minimal resources and provide best performance for real-time,
 
    4.4.1. **Local Message Copies:**
       - **Axon Relay:** MUST keep messages submitted via `PUT_MSG` in its buffer for at least their defined (and acknowledged) TTL or until acknowledged by the recipient Client.
-      - **Client:** SHOULD maintain its own local copy/history of sent and received messages.
+      - **Client:** SHOULD maintain its own local copy/history of sent and received messages, they MUST keep messages submitted via `PUT_MSG` in its buffer for at least the server defined TTL.
    4.4.2. **Good Actor Assumption:** The protocol design assumes Clients and Axon Relays are generally cooperative. Security measures are layered on top.
    4.4.3. **Handling of Empty Message Data:** All parties SHOULD ignore `MSG`, `GET_MSG_ACK`, `PUT_MSG`, `DIRECT_SEND`, or `FAST_SEND` packets where the `data` field is effectively empty (0-length), unless an empty payload is explicitly meaningful for the application.
    4.4.4. **Idempotency:**
@@ -176,7 +178,8 @@ This mode requires minimal resources and provide best performance for real-time,
           * A `GET_MSG_ACK` packet from the Axon Relay (which always refers to a buffered message with a non-zero `message_id`).
         Sending `MSG_ACK` for an `MSG` packet that contained `message_id = 0` is a protocol violation by the Client.
       * **Axon Relay:** Must send `PUT_MSG_ACK` upon successful storage of `PUT_MSG`. Must send `DIRECT_SEND_ACK` upon successful initiation of a `DIRECT_SEND` relay attempt. Must send `GET_MSG_ACK` upon successful retrieval for `GET_MSG`. Must send `LIST_MSG_ACK` upon successful processing of a `LIST_MSG` request.
-   4.4.6. **Duplicate/Out-of-Order Messages:** Client applications must be prepared to handle duplicate or out-of-order `MSG` packets from the Axon Relay (e.g., by checking `message_id` against local history).
+   4.4.6. **Duplicate/Out-of-Order Messages:** Client applications must be prepared to handle duplicate or out-of-order `MSG` packets from the Axon Relay by checking `message_id` against local history.
+   `LIST_MSG_ACK` will inherently include outgoig messages, the other Client would not be able to receive the buffered message if a client sends a `MSG_ACK` packet for message they sent.
    4.4.7. **PING/PONG Behavior:**
       - Both Client and Axon Relay MUST implement the ability to send and respond to PING/PONG packets.
       - Any party (Client or Axon Relay) can send a `PING`.
@@ -272,23 +275,23 @@ While the protocol itself defines the communication rules, the following deploym
 
 ### 5.1. Versioned and Variant-Specific Endpoints via DNS
 
-- **Endpoint Naming Convention (Specific Revisions):** Axon Relay endpoints **MUST** embed the protocol version, a specific revision/build identifier, and transport directly into a **single DNS label** which forms the subdomain of the service's primary domain. If an alternative message encoding format (other than the default binary wire format) is used, the message format identifier is appended. The path component of the URL should remain consistent.
+- **Endpoint Naming Convention (Specific Revisions):** Axon Relay endpoints **MUST** embed the protocol version, a specific revision/build identifier, and transport directly into a **single DNS label** which forms the subdomain of the service's primary domain. If an alternative message encoding format (other than the binary wire format) is used, the message format identifier is appended. The path component of the URL should remain consistent.
 
   - **Structure of the DNS Label:**
-    - For Default Binary Wire Format: `[version]-[revision]-[transport]` (3 components, 2 dashes)
-    - For Alternative Message Format: `[version]-[revision]-[transport]-[messageformat]` (4 components, 3 dashes)
+    - Binary Wire Format: `[version]-[revision]-[transport]` (3 components, 2 dashes)
+    - Alternative Message Format: `[version]-[revision]-[transport]-[messageformat]` (4 components, 3 dashes)
   - **Full Domain Structure:**
-    - Default: `[version]-[revision]-[transport].your-axon-relay-service.com`
-    - Alternative: `[version]-[revision]-[transport]-[messageformat].your-axon-relay-service.com`
+    - Binary Wire Format: `[version]-[revision]-[transport].your-axon-relay-service.com`
+    - Alternative Message Format: `[version]-[revision]-[transport]-[messageformat].your-axon-relay-service.com`
 
   - **Components within the Label:**
     - **`[version]`**: The core Axon Protocol version (e.g., `v0`, `v1`). **Mandatory.**
     - **`[revision]`**: A specific revision, build number, or patch identifier of the Axon Relay software (e.g., `r1`, `b1023`, `v0patch1`). **Mandatory for specific, stable deployments.**
     - **`[transport]`**: The underlying transport protocol (e.g., `wss`, `ws`, `tcp`). **Mandatory.**
-    - **`[messageformat]`**: (Only present if not using the default binary wire format, indicated by being the 4th component with 3 dashes total). Identifier for the alternative message encoding format (e.g., `json`).
+    - **`[messageformat]`**: (Only present if not using the binary wire format, indicated by being the 4th component with 3 dashes total). Identifier for the alternative message encoding format (e.g., `json`).
 
 - **Optional "Latest Revision" Alias Endpoints:** For convenience during development or for non-critical applications, an alias subdomain (again, a single DNS label) pointing to the latest known stable revision of a given Axon Protocol version _may_ be provided. This follows the same component and dash count logic.
-  - **Alias for Default Binary Wire Format:**
+  - **Alias for Binary Wire Format:**
     - DNS Label: `[version]-latest-[transport]`
     - Full Domain: `[version]-latest-[transport].your-axon-relay-service.com`
   - **Alias for Alternative Message Format:**
