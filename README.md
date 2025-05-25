@@ -86,6 +86,7 @@ The protocol is built around these fundamental operations between a Client and a
 - _Enables:_ Efficient, paginated synchronization and recovery. The `from` and `to` cursors can be full `message_id`s, partial `message_id`s (timestamp portion filled, rest zeroed for time-based queries), or special values (all-zero for start, all-one for end).
 
 #### 4.1.5. Retrieving a Specific Message (The "GET" Operation):
+
 - A Client requests specific message content from the Axon Relay using its `message_id`.
 - The Axon Relay responds with the `message_id` and its content in a `GET_MSG_ACK` packet.
 - The Client acknowledges receipt of the `message_id`'s content by sending a `MSG_ACK`.
@@ -94,40 +95,60 @@ The protocol is built around these fundamental operations between a Client and a
 ### 4.2. General Expected Behaviors (Client & Axon Relay)
 
 #### 4.2.1. Local Message Copies
+
 - **Axon Relay:** MUST keep messages in its buffer for at least their defined TTL or until acknowledged by the recipient Client (via `MSG_ACK` following a `MSG` or `GET_MSG_ACK`).
 - **Client:** SHOULD maintain its own local copy/history of sent and received messages.
+
 #### 4.2.2. Good Actor Assumption
+
 The protocol design assumes Clients and Axon Relays are generally cooperative. Security measures are layered on top.
+
 #### 4.2.3. Handling of Empty Message Data
+
 All parties SHOULD ignore `MSG`, `GET_MSG_ACK`, or `PUT_MSG` packets where the `data` field is empty, unless explicitly meaningful for the application.
+
 #### 4.2.4. Idempotency
+
 - **Client (`PUT_MSG`):** Must generate a unique `idempotency_key` for each new message submission to the Axon Relay.
 - **Axon Relay (`PUT_MSG`):** Must use the `idempotency_key` to prevent duplicate message storage from retried `PUT_MSG` requests.
+
 #### 4.2.5. Acknowledgments
+
 `MSG_ACK`, `PUT_MSG_ACK`, `GET_MSG_ACK`, `LIST_MSG_ACK`
+
 - These packets _always_ signify that the corresponding request operation (`MSG` delivery, `PUT_MSG`, `GET_MSG`, `LIST_MSG`) was successfully processed by the receiver according to the protocol rules.
 - A "successful process" for `LIST_MSG` includes returning an empty list if no messages match the criteria.
 - Actual operational errors encountered by the Axon Relay while attempting to fulfill a Client's request (`PUT_MSG`, `GET_MSG`, `LIST_MSG`) are reported back to the Client using a `NACK` packet.
 - **Client:** Must send `MSG_ACK` upon successful receipt of `MSG` or `GET_MSG_ACK` from the Axon Relay.
 - **Axon Relay:** Must send `PUT_MSG_ACK` upon successful storage of `PUT_MSG`. Must send `GET_MSG_ACK` upon successful retrieval for `GET_MSG`. Must send `LIST_MSG_ACK` upon successful processing of a `LIST_MSG` request (which may result in an empty list of `message_id`s).
+
 #### 4.2.6. Duplicate/Out-of-Order Messages
+
 Client applications must be prepared to handle duplicate or out-of-order `MSG` packets from the Axon Relay (e.g., by checking `message_id` against local history).
+
 #### 4.2.7. PING/PONG Behavior:
+
 - Both Client and Axon Relay MUST implement the ability to send and respond to PING/PONG packets.
 - Any party (Client or Axon Relay) can send a `PING`.
 - If a party receives a **simple PING** (a `PING` packet with no body/timestamp), it **MUST** respond with a **simple PONG** (a `PONG` packet with no body/timestamps).
 - If a party receives a **timestamped PING** (a `PING` packet containing a `sender_timestamp`), it **MUST** respond with either:
   1. A **simple PONG** (a `PONG` packet with no body/timestamps), effectively ignoring the received timestamp.
   2. OR a **full PONG** containing all three timestamp fields: `original_sender_timestamp` (mirrored from the PING), `receiver_receipt_timestamp` (its own receipt time), and `receiver_transmit_timestamp` (its own transmit time). These latter two timestamp fields **MUST** be present in the packet structure if this option is chosen, even if their _values_ are zero (e.g., if the receiver does not provide actual timing but acknowledges the extended PONG structure).
+
 #### 4.2.8. Processing NACKs and Connection Lifecycle:
+
 - If a party receives a `NACK` packet (Type `0xFF`) with `original_packet_type = 0xFF` and `error_code = 0x00` (Graceful Disconnect) or `error_code = 0xFF` (Critical Error) sent by the other party, it **MUST** prepare to close the connection. After processing this `NACK`, the party **MUST** close its end of the underlying connection.
 - For all other `NACK` types (i.e., those reporting recoverable errors for specific operations where `original_packet_type` is not `0xFF`), the connection **MUST NOT** be closed by the protocol itself. The party should handle the reported error and may continue communication.
 - For all standard packet types other than the terminating `NACK`s described above, the connection **MUST NOT** be closed by the protocol.
+
 #### 4.2.9. Handling of Unrecognized Packet Types:
+
 - If a party receives a packet with a `PacketType` whose MSB is 0 (indicating a standard type, values 0-127) but the type is unknown to the receiver (e.g., from a future protocol version it doesn't support), it SHOULD silently drop the packet.
 - If a party receives a packet with a `PacketType` whose MSB is 1 and value is not `0xFF` (i.e., values 128-254, indicating a non-standard type) and this type has not been negotiated or is not supported, it SHOULD silently drop the packet.
 - `NACK` (Type `0xFF`) is a standard packet and must be parsed at least to determine if it's a connection termination signal.
+
 #### 4.2.10. Strict Adherence to Standard Format
+
 For standard packet types (MSB of `PacketType` is 0, or `PacketType` is `0xFF`), Clients and Axon Relays MUST strictly follow the documented wire format.
 
 ### 4.3. Axon Relay Specific Behaviors
@@ -223,16 +244,19 @@ While the protocol itself defines the communication rules, the following deploym
 ### 5.1. Versioned and Variant-Specific Endpoints via DNS
 
 #### 5.1.1. Endpoint Naming Convention (Specific Revisions)
+
 Axon Relay endpoints **MUST** embed the protocol version, a specific revision/build identifier, and transport directly into a **single DNS label** which forms the subdomain of the service's primary domain. If an alternative message encoding format (other than the default binary wire format) is used, the message format identifier is appended. The path component of the URL should remain consistent.
 
 - **Structure of the DNS Label:**
   - For Default Binary Wire Format: `[version]-[revision]-[transport]` (3 components, 2 dashes)
   - For Alternative Message Format: `[version]-[revision]-[transport]-[messageformat]` (4 components, 3 dashes)
 - **Full Domain Structure:**
+
   - Default: `[version]-[revision]-[transport].your-axon-relay-service.com`
   - Alternative: `[version]-[revision]-[transport]-[messageformat].your-axon-relay-service.com`
 
 - **Components within the Label:**
+
   - **`[version]`**: The core Axon Protocol version (e.g., `v0`, `v1`). **Mandatory.**
   - **`[revision]`**: A specific revision, build number, or patch identifier of the Axon Relay software (e.g., `r1`, `b1023`, `v0patch1`). **Mandatory for specific, stable deployments.**
   - **`[transport]`**: The underlying transport protocol (e.g., `wss`, `ws`, `tcp`). **Mandatory.**
@@ -250,6 +274,7 @@ Axon Relay endpoints **MUST** embed the protocol version, a specific revision/bu
   - **Usage Warning:** Using these "latest" alias endpoints is **NOT RECOMMENDED for critical deployments or production applications where stability and predictable behavior are paramount.** Critical systems should always target specific revision subdomains.
 
 #### 5.1.2. Single-Level Subdomain Requirement:<!-- {"fold":true} -->
+
 The entire version/variant identifier string (e.g., `v0-r1-wss` or `v0-r1patch1-wss-json`) **MUST** form a single DNS label. This results in a single-level subdomain relative to the Axon Relay service's domain.
 
 - **Rationale:** Constructing the version/variant identifier as a single DNS label ensures broad compatibility with diverse DNS providers and hosting platforms. This structure also greatly simplifies the issuance and management of wildcard TLS certificates (e.g., `*.your-axon-relay-service.com`), as a single certificate can effectively secure all such versioned endpoints. Adherence to this single-label approach promotes straightforward DNS configuration and supports a wider range of compatible infrastructure.
@@ -258,6 +283,7 @@ The entire version/variant identifier string (e.g., `v0-r1-wss` or `v0-r1patch1-
 - Correct Example (Latest Alias, Default Format): `v0-latest-wss.axon-relay.example.com`
 
 #### 5.1.3. Path Consistency<!-- {"fold":true} -->
+
 The URL path (e.g., identifying a specific Channel or entry point to obtain a Channel) should remain consistent for Clients, with the Axon Relay software version/variant differentiation handled entirely by the single-label subdomain.
 
 ### 5.2. DNS-Level Routing and Operational Benefits (for Axon Relay Services)
@@ -461,7 +487,6 @@ pub struct PutMsgAck {
 // Body structure after the 1-byte PacketType header:
 pub struct ListMsg {
     pub limit: u16,           // (2 bytes) Maximum number of message IDs to return.
-                              // A limit of 0 is valid and will result in an empty list.
     pub from: u64,            // (8 bytes) Exclusive 'from' cursor.
     pub to: u64,              // (8 bytes) Exclusive 'to' cursor.
 }
