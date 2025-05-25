@@ -115,39 +115,46 @@ The `PUT_MSG` operation is used for submitting messages intended for **reliable,
 
 The Axon Protocol supports two modes for direct, non-persistent message relaying. These are **optional features**, and their support **SHOULD** be negotiated during the handshake (see section 4.7.4). Messages sent via these modes **MUST NOT** be knowingly persisted to durable storage or have their content logged by the Axon Relay. They should primarily reside in volatile memory on the Relay during the relay attempt.
 
-   4.3.1. **Client Trust and Encryption:** Clients **SHOULD NOT** blindly trust an Axon Relay's adherence to the no-persistence rule. For sensitive data, end-to-end encryption performed between Clients remains the strongest privacy guarantee, regardless of the delivery mode.
-   4.3.2. **Axon Relay Support:** If an Axon Relay receives a packet for a direct delivery mode (`DIRECT_SEND`, `FAST_SEND`) that it does not support (either because it was not negotiated or is generally unsupported by that Relay implementation), it **SHOULD** respond with a `NACK` (e.g., `error_code = ErrorCode::UnsupportedOptionalFeature` or `ErrorCode::UnsupportedStandardPacketType`) and then **SHOULD** terminate the connection. It **MUST NOT** treat such a request as a standard buffered `PUT_MSG`.
+- **Client Trust and Encryption:** Clients **SHOULD NOT** blindly trust an Axon Relay's adherence to the no-persistence rule. For sensitive data, end-to-end encryption performed between Clients remains the strongest privacy guarantee, regardless of the delivery mode.
+- **Axon Relay Support:** If an Axon Relay receives a packet for a direct delivery mode (`DIRECT_SEND`, `FAST_SEND`) that it does not support (either because it was not negotiated or is generally unsupported by that Relay implementation), it **SHOULD** respond with a `NACK` (e.g., `error_code = ErrorCode::UnsupportedOptionalFeature` or `ErrorCode::UnsupportedStandardPacketType`) and then **SHOULD** terminate the connection. It **MUST NOT** treat such a request as a standard buffered `PUT_MSG`.
 
-#### 4.3.3. Acknowledged Direct Delivery (`DIRECT_SEND` / `DIRECT_SEND_ACK`)
+#### 4.3.1. Acknowledged Direct Delivery (`DIRECT_SEND` / `DIRECT_SEND_ACK`)
 
 This mode provides an acknowledgment from the Axon Relay about the *attempt* to relay the message.
-   4.3.3.1. **Operation:**
-      1. Client sends `DIRECT_SEND` containing an `idempotency_key` (must be non-zero for correlation) and `data`.
-      2. The Axon Relay attempts to relay the `data` to the other Client in the Channel. This delivery attempt should generally be prioritized.
-      3. The Axon Relay responds to the sending Client with `DIRECT_SEND_ACK` (mirroring `idempotency_key` and providing a `message_id` for the relayed message) or a `NACK`.
-   4.3.3.2. **`DIRECT_SEND_ACK` Semantics:**
-      * Indicates the Axon Relay has accepted the request and initiated the delivery attempt to the recipient Client. It **DOES NOT GUARANTEE** that the recipient Client has received or processed the message.
-      * The Axon Relay should send the `DIRECT_SEND_ACK` after it has passed the message to its transport layer for delivery to the recipient Client or can otherwise reasonably assume the delivery process has begun.
-   4.3.3.3. **`NACK` Semantics (for `DIRECT_SEND`):**
-      * The Axon Relay **MUST** reply with a `NACK` if the delivery attempt could not even be initiated (e.g., the recipient Client's connection was already known to be closed *before* any delivery attempt was made, or an immediate internal error prevented the attempt). The `NACK` should include the `idempotency_key` from the `DIRECT_SEND` in its `correlation_data`.
-   4.3.3.4. **`message_id` in `DIRECT_SEND_ACK` and relayed `MSG`:** The Axon Relay **MUST** use a `message_id` of `0` (all-zero bits) for the message being relayed. This `message_id` of `0` is returned in the `DIRECT_SEND_ACK` and **MUST** be used in the `MSG` packet pushed to the recipient Client.
 
-#### 4.3.4. Unacknowledged "Fire-and-Forget" Direct Delivery (`FAST_SEND`)
+- **Operation:**
+    1. Client sends `DIRECT_SEND` containing an `idempotency_key` (must be non-zero for correlation) and `data`.
+    2. The Axon Relay attempts to relay the `data` to the other Client in the Channel. This delivery attempt should generally be prioritized.
+    3. The Axon Relay responds to the sending Client with `DIRECT_SEND_ACK` (mirroring `idempotency_key` and providing a `message_id` for the relayed message) or a `NACK`.
 
-This mode is for very low-latency, best-effort, unacknowledged relay where the sending Client does not require a protocol-level acknowledgment of the relay attempt.
-   4.3.4.1. **Operation:**
-      1. Client sends `FAST_SEND`. The packet body, immediately following the `PacketType` header, is the raw message `data`.
-      2. The Axon Relay attempts to relay the `data` to the other Client in the Channel.
-      3. When an Axon Relay relays a `FAST_SEND` message to the recipient Client as an `MSG` packet, it **MUST** use a `message_id` of `0` (all-zero bits) in that `MSG` packet.
-      4. The Axon Relay **MUST NOT** send a `FAST_SEND_ACK` (Type 13); this packet type is reserved as a no-operation.
-   4.3.4.2. **`NACK` Behavior (Optional by Relay for `FAST_SEND`):**
-      * Sending a `NACK` in response to a `FAST_SEND` (e.g., if the recipient is known to be disconnected before attempt) is **OPTIONAL** for the Axon Relay. An Axon Relay might choose not to send `NACK`s for `FAST_SEND` failures to minimize overhead.
-      * If a `NACK` is sent, its `original_packet_type` will be `PacketType::FastSend`, and its `correlation_data` field **MUST** be empty.
-   4.3.4.3. **Client Expectations for `FAST_SEND`:**
+- **`DIRECT_SEND_ACK` Semantics:**
+    * Indicates the Axon Relay has accepted the request and initiated the delivery attempt to the recipient Client. It **DOES NOT GUARANTEE** that the recipient Client has received or processed the message.
+    * The Axon Relay should send the `DIRECT_SEND_ACK` after it has passed the message to its transport layer for delivery to the recipient Client or can otherwise reasonably assume the delivery process has begun.
+
+- **`NACK` Semantics (for `DIRECT_SEND`):** The Axon Relay **MUST** reply with a `NACK` if the delivery attempt could not even be initiated (e.g., the recipient Client's connection was already known to be closed *before* any delivery attempt was made, or an immediate internal error prevented the attempt). The `NACK` should include the `idempotency_key` from the `DIRECT_SEND` in its `correlation_data`.
+
+- **`message_id` in `DIRECT_SEND_ACK` and relayed `MSG`:** The Axon Relay **MUST** use a `message_id` of `0` (all-zero bits) for the message being relayed. This `message_id` of `0` is returned in the `DIRECT_SEND_ACK` and **MUST** be used in the `MSG` packet pushed to the recipient Client.
+
+#### 4.3.2. Unacknowledged "Fire-and-Forget" Direct Delivery (`FAST_SEND`)
+
+This mode requires minimal resources and provide best performance for real-time, best-effort, unacknowledged relay where the sending Client does not require a protocol-level acknowledgment of the relay attempt.
+- **Operation:**
+    1. Client sends `FAST_SEND`. The packet body, immediately following the `PacketType` header, is the raw message `data`.
+    2. The Axon Relay attempts to relay the `data` to the other Client in the Channel.
+    3. When an Axon Relay relays a `FAST_SEND` message to the recipient Client as an `MSG` packet, it **MUST** use a `message_id` of `0` (all-zero bits) in that `MSG` packet.
+    4. The Axon Relay **MUST NOT** send a `FAST_SEND_ACK` (Type 13); this packet type is reserved as a no-operation.
+
+- **`NACK` Behavior (Optional by Relay for `FAST_SEND`):**
+    * Sending a `NACK` in response to a `FAST_SEND` (e.g., if the recipient is known to be disconnected before attempt) is **OPTIONAL** for the Axon Relay. An Axon Relay might choose not to send `NACK`s for `FAST_SEND` failures to minimize overhead.
+    * If a `NACK` is sent, its `original_packet_type` will be `PacketType::FastSend`, and its `correlation_data` field **MUST** be empty.
+
+- **Client Expectations for `FAST_SEND`:**
       * Clients using this mode accept that there is no guarantee of relay attempt or delivery.
       * Clients **MUST** still be prepared to handle a `NACK` if the Relay chooses to send one (e.g., for persistent issues) and SHOULD react appropriately (e.g., pause sending, log the event).
-   4.3.4.4. **High Volume Consideration:** For very high volumes of `FAST_SEND` messages, Clients might negotiate a non-standard, even more compact packet type with the Axon Relay during the handshake.
-   4.3.4.5. **Alternative Protocols Note:** If an application's primary or exclusive mode of communication is unacknowledged, fire-and-forget direct delivery, developers should evaluate whether a simpler custom WebSocket relay or a protocol specifically designed for such high-throughput, low-guarantee streaming (e.g., WebRTC data channels for true client-to-client P2P once established) might be more appropriate. The Axon Protocol can still be used to exchange the necessary information to establish such alternative connections.
+
+- **High Volume Consideration:** For very high volumes of `FAST_SEND` messages, Clients might negotiate a non-standard, even more compact packet type with the Axon Relay during the handshake.
+
+- **Alternative Protocols Note:** If an application's primary or exclusive mode of communication is unacknowledged, fire-and-forget direct delivery, developers should evaluate whether a simpler custom WebSocket relay or a protocol specifically designed for such high-throughput, low-guarantee streaming (e.g., WebRTC data channels for true client-to-client P2P once established) might be more appropriate. The Axon Protocol can still be used to exchange the necessary information to establish such alternative connections.
 
 ### 4.4. General Expected Behaviors (Client & Axon Relay)
 
@@ -193,17 +200,17 @@ This mode is for very low-latency, best-effort, unacknowledged relay where the s
 
 ### 4.5. Axon Relay Specific Behaviors
 
-   4.5.1. **Error Reporting via `NACK`:**
+    4.5.1. **Error Reporting via `NACK`:**
       * If an Axon Relay encounters a recoverable error while processing a Client's request (`PUT_MSG`, `DIRECT_SEND`, `GET_MSG`, `LIST_MSG`), it SHALL respond with a `NACK`.
       * If a request contains structurally valid parameters that are logically invalid or violate Relay policy in a way that indicates a Client error/bug (e.g., an impossible range or cursors in `LIST_MSG` that cannot be resolved to an empty set, a value known to be out of bounds for a field), it **SHOULD** respond with `NACK` and `error_code = ErrorCode::InvalidParametersCritical (0xF4)`, then **SHOULD** terminate the connection.
       * For less severe policy violations (e.g., `ttl` for `PUT_MSG` outside preferred but still acceptable bounds resulting in adjustment), an `error_code` from the `0x20-0x9F` (e.g., `ErrorCode::InvalidTtlForPut`) or `0xA0-0xDF` ranges should be used, and the connection typically remains open. The honored TTL is communicated via `PUT_MSG_ACK`.
-   4.5.2. **Internal Errors/Assertion Failures:** If an Axon Relay encounters an unrecoverable internal error or an assertion failure, it **SHOULD** attempt to send a `NACK` with `original_packet_type = PacketType::Nack (0xFF)` and `error_code = ErrorCode::CriticalErrorAbort (0xFF)` or `ErrorCode::UnspecifiedRelayInternalError (0xFE)` before terminating the connection.
-   4.5.3. **Critical Errors / Rate Limiting / Graceful Disconnect and Connection Closure:** In cases of critical errors not covered above, or for enforcing rate limits that necessitate connection closure, or for planned graceful disconnects, the Axon Relay will use appropriate `NACK` packets with `original_packet_type = PacketType::Nack (0xFF)` and relevant `error_code` values (`0x00`, `0xF7`, `0xFF`), then close the connection.
-   4.5.4. **Dynamic Channel Resource Management (Conceptual):** Axon Relay instances are expected to manage resources for Channels on demand.
-   4.5.5. **Tenant/Channel Isolation:** Paramount. Achieved through partitioned storage and instance isolation.
-   4.5.6. **One Channel Per Logical Axon Relay Instance (Recommended):** Simplifies state management. A "logical instance" refers to the entity managing a single Channel's state and buffer, e.g., a Cloudflare Durable Object. A single physical serverless function execution might host multiple such logical instances if the platform supports it.
-   4.5.7. **Access Control & Rate Limiting (Implementation Detail):** The Axon Relay implementation MUST handle access control and SHOULD implement rate limiting.
-      * **Note on Error Handling and Rate Limiting:** Axon Relay implementations SHOULD log `NACK`-triggering events. The type and rate of errors (especially `0xA0-0xDF` warnings and `0xF0-0xFF` critical client errors) from a specific Client can be used as factors in dynamic rate-limiting decisions or for identifying clients to block/disconnect.
+    4.5.2. **Internal Errors/Assertion Failures:** If an Axon Relay encounters an unrecoverable internal error or an assertion failure, it **SHOULD** attempt to send a `NACK` with `original_packet_type = PacketType::Nack (0xFF)` and `error_code = ErrorCode::CriticalErrorAbort (0xFF)` or `ErrorCode::UnspecifiedRelayInternalError (0xFE)` before terminating the connection.
+    4.5.3. **Critical Errors / Rate Limiting / Graceful Disconnect and Connection Closure:** In cases of critical errors not covered above, or for enforcing rate limits that necessitate connection closure, or for planned graceful disconnects, the Axon Relay will use appropriate `NACK` packets with `original_packet_type = PacketType::Nack (0xFF)` and relevant `error_code` values (`0x00`, `0xF7`, `0xFF`), then close the connection.
+    4.5.4. **Dynamic Channel Resource Management (Conceptual):** Axon Relay instances are expected to manage resources for Channels on demand.
+    4.5.5. **Tenant/Channel Isolation:** Paramount. Achieved through partitioned storage and instance isolation.
+    4.5.6. **One Channel Per Logical Axon Relay Instance (Recommended):** Simplifies state management. A "logical instance" refers to the entity managing a single Channel's state and buffer, e.g., a Cloudflare Durable Object. A single physical serverless function execution might host multiple such logical instances if the platform supports it.
+    4.5.7. **Access Control & Rate Limiting (Implementation Detail):** The Axon Relay implementation MUST handle access control and SHOULD implement rate limiting.
+    4.5.8. **Note on Error Logging and Rate Limiting:** Axon Relay implementations SHOULD log `NACK`-triggering events. The type and rate of errors (especially `0xA0-0xDF` warnings and `0xF0-0xFF` critical client errors) from a specific Client can be used as factors in dynamic rate-limiting decisions or for identifying clients to block/disconnect.
 
 ### 4.6. Axon Relay Storage: Partitioning for Scalability
 
@@ -522,7 +529,6 @@ pub struct Nack {
   The 8-bit `error_code` field provides information about the NACK. If an implementation receives an unrecognized `error_code` for the given `original_packet_type`, it **SHOULD** treat it as `ErrorCode::CriticalErrorAbort (0xFF)`. Implementations sending a `NACK` MUST use defined error codes.
 
   ```rust
-  #[repr(u8)]
   pub enum ErrorCode {
       // --- 0x00 - 0x1F: Informational & Standard Operational Outcomes ---
       // Reaction: Normal flow. Log debug only. Connection status per code.
