@@ -497,7 +497,7 @@ pub enum PacketType {
     FastSendAck = 13,   // Optional: Reserved No-Op. Client MUST NOT send. Relay MUST NOT send.
 
     // Values 14-127 are reserved for future standard types (must follow LSB pairing).
-    // Values 128-254 (MSB set, not 0xFF) are for non-standard/experimental types.
+    // Values 128-254 (MSB set, except 0xFF) are for non-standard/experimental types.
 
     Nack = 255,
 }
