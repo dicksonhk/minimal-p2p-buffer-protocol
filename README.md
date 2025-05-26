@@ -476,8 +476,6 @@ All communication occurs via packets (byte arrays). **It is assumed that the tra
 The `PacketType` is represented as a `u8` on the wire.
 
 ```rust
-// Axon Messaging Protocol Version: 0
-#[repr(u8)]
 pub enum PacketType {
     Ping = 0,
     Pong = 1,
