@@ -357,8 +357,9 @@ Messages sent via `DIRECT_SEND` or `FAST_SEND` (effectively TTL `0`, relayed wit
 #### 4.7.3. Handling Different Versions
 
 - If a version or format mismatch is detected during handshake, the Axon Relay **MUST** send a `NACK` (`original_packet_type = PacketType::Nack (0xFF)`, `error_code = ErrorCode::ProtocolVersionMismatch (0x01)`) in the transport layer and then **MUST** close the connection. The Client **MUST** also close the connection upon receiving this error.
-- Implementations of newer protocol versions **MUST NOT** retain code paths for compatibility with older or future protocol versions. The protocol's minimalistic design requires that only the current version’s logic is implemented. This avoids code bloat and maintenance complexity.
--The version and format are checked before connection establishment, so mismatches are prevented at the handshake. Only the logic for the currently supported version should exist in the codebase.
+- Only the logic for the currently supported version should exist in the codebase.
+- Implementations **MUST NOT** retain code paths for compatibility with older or future protocol versions. Retaining such compatibility code would violate the protocol's minimalistic design and make the codebase harder to maintain.
+- Explicit version checking before connection establishment (via endpoint selection and handshake) prevents version mismatches in normal operation.
 #### 4.7.4. Negotiation for Optional Standard Features and Non-Standard Packet Types
 
 - Support for optional standard features (e.g., `DIRECT_SEND`, `FAST_SEND` operations) and any intended use of non-standard packet types (`PacketType` values 128-254) **SHOULD** be established or negotiated during the handshake. An Axon Relay is not obligated to support all optional features.
@@ -371,6 +372,7 @@ Messages sent via `DIRECT_SEND` or `FAST_SEND` (effectively TTL `0`, relayed wit
 
 - **Explicit Channel Lifecycle Management APIs.**
 - **Axon Relay Statistics and Monitoring.**
+- **Primary/Exclusive Fire-and-Forget Communication.** (See [section 4.3.2](#432-unacknowledged-fire-and-forget-direct-delivery-fast_send) for alternative recommendations.)
 
 ### 4.9. General System Design Notes
 
@@ -463,13 +465,11 @@ All communication occurs via packets (byte arrays). **It is assumed that the tra
   - If MSB of `PacketType` is 1 and value is not `255` (i.e., 128-254), it's a non-standard/experimental type.
 
 - **Standard Packet Type Pairing Convention:**
-  - Most standard packet types (values 0-127, excluding `NACK`) that represent an operation with a direct response will exist in pairs: a request type and an acknowledgment type.
-  - The request packet type value will have its Least Significant Bit (LSB) as `0` (i.e., it will be an even number).
-  - The corresponding acknowledgment packet type value (`_ACK`) will have its LSB as `1` (i.e., it will be an odd number), and its value will be `request_type + 1`.
-  - This convention applies to `MSG`/`MSG_ACK`, `GET_MSG`/`GET_MSG_ACK`, `PUT_MSG`/`PUT_MSG_ACK`, `LIST_MSG`/`LIST_MSG_ACK`, `DIRECT_SEND`/`DIRECT_SEND_ACK`, and conceptually to `FAST_SEND`/`FAST_SEND_ACK` (though `FAST_SEND_ACK` is a no-op).
-  - `PING` (0) and `PONG` (1) also adhere to this pattern, with `PONG` acting as the acknowledgment to `PING`.
-  - The `NACK` packet (255) is a special case and does not follow this pairing rule.
-  - All future standard operational packet types MUST adhere to this LSB pairing convention.
+  - All standard packet types (values 0–127) exist in pairs: a request type and its acknowledgment type.
+  - The request type always has an even value (LSB = 0).
+  - The acknowledgment type is always the next odd value (LSB = 1), i.e., `request_type + 1`.
+  - `NACK` (255) is a special case and does not follow this rule.
+  - Future standard packet types SHOULD follow this LSB pairing convention.
 
 ### 6.2. Packet Types (`PacketType`)
 
