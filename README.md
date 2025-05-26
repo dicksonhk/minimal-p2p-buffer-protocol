@@ -8,7 +8,7 @@
 
 This document outlines the **Axon Messaging Protocol** (or Axon Protocol), a communication system designed to leverage the strengths and characteristics of **serverless architectures** for its relaying components. The protocol facilitates communication **Channels** that are conceptually one-to-one between two end-**Clients**. These two **Clients** individually connect to an intermediary component, termed the **Axon Relay**, which acts as a message buffer and relay for their shared **Channel**. The Axon Protocol offers modes for reliable, buffered message delivery with **at-least-once semantics**, as well as options for direct, non-persistent relay. It is optimized for scenarios where an Axon Relay mediates communication for a pair of Clients.
 
-The protocol is **designed to be minimalistic, fostering reliability and high scalability**, particularly for scenarios involving a **massive number of concurrent Channels, each typically involving two active Clients and a mediating Axon Relay instance**. Key to its scalability is this focus on small, independent Channels and the expectation of **per-tenant/per-channel data partitioning** within the Axon Relay's backend. Its reliability is further supported by mechanisms for at-least-once delivery (for buffered messages) and acknowledged message handling. This design was initially inspired by and intended for environments like Cloudflare Workers utilizing Durable Objects for the Axon Relay's buffer storage, but it is adaptable to other serverless platforms and partitioned storage solutions.
+The protocol is **designed to be minimalistic, fostering reliability and high scalability**, particularly for scenarios involving a **massive number of concurrent Channels, each typically involving two Clients and a mediating Axon Relay instance**. Key to its scalability is this focus on small, independent Channels and the expectation of **per-tenant/per-channel data partitioning** within the Axon Relay's backend. Its reliability is further supported by mechanisms for at-least-once delivery (for buffered messages) and acknowledged message handling. This design was initially inspired by and intended for environments like Cloudflare Workers utilizing Durable Objects for the Axon Relay's buffer storage, but it is adaptable to other serverless platforms and partitioned storage solutions.
 
 The Axon Protocol aims to be:
 
@@ -115,11 +115,25 @@ The protocol is built around these fundamental operations between a Client and a
 
 The `PUT_MSG` operation is used for submitting messages intended for **reliable, buffered delivery** by the Axon Relay.
 
-- 4.2.1. **Client Submission:** The Client includes a `ttl` field (in seconds, which **MUST** be `> 0` for this packet type) and an `idempotency_key` in the `PUT_MSG` packet.
-- 4.2.2. **Axon Relay Authority:** The Axon Relay MAY adjust the suggested TTL based on its own policies (e.g., maximum or minimum allowable TTL).
-- 4.2.3. **Honored TTL in Acknowledgment:** The Axon Relay MUST include the actual (honored) TTL it has applied (which will also be `> 0`) in the `PUT_MSG_ACK` packet sent back to the Client. This represents the duration for which the Axon Relay commits to attempting to buffer the message if not acknowledged earlier by the recipient Client.
-- 4.2.4. **Persistence:** The Axon Relay WILL persist the message according to its storage backend capabilities for the honored TTL duration or until acknowledged as received by the recipient Client (via an `MSG_ACK` after the Relay pushes the message via `MSG`).
-- 4.2.5. **Client Awareness:** Clients should use the `ttl` value from `PUT_MSG_ACK` as the authoritative buffering duration for that message on the Axon Relay.
+#### 4.2.1. **Client Submission**
+
+The Client includes a `ttl` field (in seconds, which **MUST** be `> 0` for this packet type) and an `idempotency_key` in the `PUT_MSG` packet.
+
+#### 4.2.2. **Axon Relay Authority**
+
+The Axon Relay MAY adjust the suggested TTL based on its own policies (e.g., maximum or minimum allowable TTL).
+
+#### 4.2.3. **Honored TTL in Acknowledgment**
+
+The Axon Relay MUST include the actual (honored) TTL it has applied (which will also be `> 0`) in the `PUT_MSG_ACK` packet sent back to the Client. This represents the duration for which the Axon Relay commits to attempting to buffer the message if not acknowledged earlier by the recipient Client.
+
+#### 4.2.4. **Persistence**
+
+The Axon Relay WILL persist the message according to its storage backend capabilities for the honored TTL duration or until acknowledged as received by the recipient Client (via an `MSG_ACK` after the Relay pushes the message via `MSG`).
+
+#### 4.2.5. **Client Awareness**
+
+Clients should use the `ttl` value from `PUT_MSG_ACK` as the authoritative buffering duration for that message on the Axon Relay.
 
 ### 4.3. Direct Message Delivery (Non-Persistent - Optional Features)
 
@@ -135,7 +149,7 @@ This mode provides an acknowledgment from the Axon Relay about the _attempt_ to 
 - **Operation:**
   1. Client sends `DIRECT_SEND` containing an `idempotency_key` (must be non-zero for correlation) and `data`.
   2. The Axon Relay attempts to relay the `data` to the other Client in the Channel. This delivery attempt should generally be prioritized.
-  3. The Axon Relay responds to the sending Client with `DIRECT_SEND_ACK` (mirroring `idempotency_key` and providing a `message_id` for the relayed message) or a `NACK`.
+  3. The Axon Relay responds to the sending Client with `DIRECT_SEND_ACK` (mirroring `idempotency_key`) or a `NACK`.
 
 - **`DIRECT_SEND_ACK` Semantics:**
   - Indicates the Axon Relay has accepted the request and initiated the delivery attempt to the recipient Client. It **DOES NOT GUARANTEE** that the recipient Client has received or processed the message.
@@ -143,7 +157,7 @@ This mode provides an acknowledgment from the Axon Relay about the _attempt_ to 
 
 - **`NACK` Semantics (for `DIRECT_SEND`):** The Axon Relay **MUST** reply with a `NACK` if the delivery attempt could not even be initiated (e.g., the recipient Client's connection was already known to be closed _before_ any delivery attempt was made, or an immediate internal error prevented the attempt). The `NACK` should include the `idempotency_key` from the `DIRECT_SEND` in its `correlation_data`.
 
-- **`message_id` in `DIRECT_SEND_ACK` and relayed `MSG`:** The Axon Relay **MUST** use a `message_id` of `0` (all-zero bits) for the message being relayed. This `message_id` of `0` is returned in the `DIRECT_SEND_ACK` and **MUST** be used in the `MSG` packet pushed to the recipient Client.
+- **`message_id` in relayed `MSG`:** The Axon Relay **MUST** use a `message_id` of `0` (all-zero bits) for the `MSG` packet pushed to the recipient Client.
 
 #### 4.3.2. Unacknowledged "Fire-and-Forget" Direct Delivery (`FAST_SEND`)
 
@@ -163,20 +177,26 @@ This mode requires minimal resources and provide best performance for real-time,
   - Clients using this mode accept that there is no guarantee of relay attempt or delivery.
   - Clients **MUST** still be prepared to handle a `NACK` if the Relay chooses to send one (e.g., for persistent issues) and SHOULD react appropriately (e.g., pause sending, log the event).
 
-- **High Volume Consideration:** For very high volumes of `FAST_SEND` messages, Clients might negotiate a non-standard, even more compact packet type with the Axon Relay during the handshake.
-
-- **Alternative Protocols Note:** If an application's primary or exclusive mode of communication is unacknowledged, fire-and-forget direct delivery, developers should evaluate whether a simpler custom WebSocket relay or a protocol specifically designed for such high-throughput, low-guarantee streaming (e.g., WebRTC data channels for true client-to-client P2P once established) might be more appropriate. The Axon Protocol can still be used to exchange the necessary information to establish such alternative connections.
+> **Alternative Protocols**
+>
+> If an application's primary or exclusive mode of communication is unacknowledged, fire-and-forget direct delivery, developers should evaluate whether a simpler custom WebSocket relay or a protocol specifically designed for such high-throughput, low-guarantee streaming (e.g., UDP socket, WebRTC data channels) might be more appropriate.
+>
+> The Axon Protocol can still be used to exchange the necessary information to establish such alternative connections.
 
 ### 4.4. General Expected Behaviors (Client & Axon Relay)
 
 #### 4.4.1. **Local Message Copies**
 
-- **Axon Relay:** MUST keep messages submitted via `PUT_MSG` in its buffer for at least their defined (and acknowledged) TTL or until acknowledged by the recipient Client.
-- **Client:** SHOULD maintain its own local copy/history of sent and received messages, they MUST keep messages submitted via `PUT_MSG` in its buffer for at least the server defined TTL.
+- **Axon Relay:** SHOULD keep messages submitted via `PUT_MSG` in its buffer for at least their defined (and acknowledged) TTL or until acknowledged by the recipient Client.
+- **Client:** SHOULD maintain its own local copy/history of sent and received messages, they SHOULD keep messages submitted via `PUT_MSG` in its buffer for at least the server defined TTL.
 
 #### 4.4.2. **Good Actor Assumption**
 
 The protocol design assumes Clients and Axon Relays are generally cooperative. Security measures are layered on top.
+
+Clients MUST aim for a low error-rate and implement rate limiting.
+
+Relays SHOULD isolate the buffer and use aggressive rate limiting or banning policy to protect overall system stability and good actors.
 
 #### 4.4.3. **Handling of Empty Message Data**
 
@@ -196,8 +216,13 @@ All parties SHOULD ignore `MSG`, `GET_MSG_ACK`, `PUT_MSG`, `DIRECT_SEND`, or `FA
 - **Client:** Must send `MSG_ACK` upon successful receipt of:
   - An `MSG` packet from the Axon Relay, **only if** the `MSG` packet contains a non-zero `message_id`.
   - A `GET_MSG_ACK` packet from the Axon Relay (which always refers to a buffered message with a non-zero `message_id`).
-        Sending `MSG_ACK` for an `MSG` packet that contained `message_id = 0` is a protocol violation by the Client.
-- **Axon Relay:** Must send `PUT_MSG_ACK` upon successful storage of `PUT_MSG`. Must send `DIRECT_SEND_ACK` upon successful initiation of a `DIRECT_SEND` relay attempt. Must send `GET_MSG_ACK` upon successful retrieval for `GET_MSG`. Must send `LIST_MSG_ACK` upon successful processing of a `LIST_MSG` request.
+  - Sending `MSG_ACK` for an `MSG` packet that contained `message_id = 0` is a protocol violation by the Client.
+- **Axon Relay:**
+  - Must send `PUT_MSG_ACK` upon successful storage of `PUT_MSG`.
+  - Must send `DIRECT_SEND_ACK` upon successful initiation of a `DIRECT_SEND` relay attempt.
+  - Must send `GET_MSG_ACK` upon successful retrieval for `GET_MSG`.
+  - Must send `LIST_MSG_ACK` upon successful processing of a `LIST_MSG` request.
+  - Must NOT send `FAST_SEND_ACK`.
 
 #### 4.4.6. **Duplicate/Out-of-Order Messages**
 
@@ -220,15 +245,26 @@ Client applications must be prepared to handle duplicate or out-of-order `MSG` p
 - If the `error_code` within a `NACK` is not recognized by the receiver for the given `original_packet_type`, it **SHOULD** be treated as equivalent to receiving `ErrorCode::CriticalErrorAbort (0xFF)`, leading to connection termination.
 - **Connection Terminating NACKs:**
   - A `NACK` with `original_packet_type = PacketType::Nack (0xFF)` AND (`error_code == ErrorCode::GracefulDisconnect (0x00)` OR `error_code == ErrorCode::CriticalErrorAbort (0xFF)`) signals a mandatory connection closure. Both sender and receiver MUST close the connection.
-  - For any `NACK` with an `error_code` in the range `0xE0-0xFF` (Critical Errors), both the sender and receiver of the `NACK` **SHOULD** close the connection. The sender closes after attempting to send the NACK; the receiver closes after processing it.
+  - For any `NACK` with an `error_code` in the range `0xE0-0xFF` (Critical Errors), both the sender and receiver of the `NACK` **SHOULD** close the connection. The sender closes after attempting to send the NACK; the receiver closes after receiving it.
 - **Non-Terminating NACKs (by default):** For `NACK`s reporting errors typically in the range `0x01-0xDF` (unless it's `GracefulDisconnect`), the connection **MUST NOT** be closed by the protocol itself solely due to receiving the `NACK`.
 
 #### 4.4.9. **Handling of Invalid, Forbidden, or Unnegotiated Packets**
 
-- **Malformed Standard Packets:** If a party receives a standard packet type that it recognizes but whose body is structurally invalid (e.g., incorrect length for fixed fields) according to this specification, it **SHOULD** attempt to send a `NACK` (`original_packet_type` = offending type, `error_code = ErrorCode::MalformedPacket (0xF0)`) and then **SHOULD** terminate the connection.
-- **Forbidden Standard Packets:** If a party receives a standard packet explicitly forbidden in the current context or by that party's role (e.g., an Axon Relay receiving `FAST_SEND_ACK`, or a Client sending `MSG_ACK` for `message_id = 0`), it **SHOULD** attempt to send a `NACK` (`original_packet_type` = offending type, `error_code = ErrorCode::ProtocolViolation (0xF1)`) and then **SHOULD** terminate the connection.
-- **Unnegotiated/Unsupported Non-Standard Packets (MSB=1):** If a party receives a packet with `PacketType` MSB=1 (values 128-254) and this type has not been negotiated or is not supported, it **SHOULD** attempt to send a `NACK` (`original_packet_type` = offending type, `error_code = ErrorCode::UnsupportedNonStandardPacketType (0xF3)`) and then **SHOULD** terminate the connection. This is especially recommended for public Axon Relay services.
-- **Unrecognized/Unsupported Standard Packets (Violating Negotiated Version):** If a party receives a standard packet type not defined in the protocol version agreed upon during handshake, it **SHOULD** attempt to send a `NACK` (`original_packet_type` = offending type, `error_code = ErrorCode::UnsupportedStandardPacketType (0xF2)`). The connection **SHOULD NOT** be terminated by the receiver solely for a single instance; persistent sending may lead to termination by other mechanisms (e.g. rate limiting).
+- **Malformed Standard Packets:**
+
+  If a party receives a standard packet type that it recognizes but whose body is structurally invalid (e.g., incorrect length for fixed fields) according to this specification, it **SHOULD** attempt to send a `NACK` (`original_packet_type` = offending type, `error_code = ErrorCode::MalformedPacket (0xF0)`) and then **SHOULD** terminate the connection.
+
+- **Forbidden Standard Packets:**
+
+  If a party receives a standard packet explicitly forbidden in the current context or by that party's role (e.g., an Axon Relay receiving `FAST_SEND_ACK`, or a Client sending `MSG_ACK` for `message_id = 0`), it **SHOULD** attempt to send a `NACK` (`original_packet_type` = offending type, `error_code = ErrorCode::ProtocolViolation (0xF1)`) and then **SHOULD** terminate the connection.
+
+- **Unnegotiated/Unsupported Non-Standard Packets (MSB=1):**
+
+  If a party receives a packet with `PacketType` MSB=1 (values 128-254) and this type has not been negotiated or is not supported, it **SHOULD** attempt to send a `NACK` (`original_packet_type` = offending type, `error_code = ErrorCode::UnsupportedNonStandardPacketType (0xF3)`) and then **SHOULD** terminate the connection. This is especially recommended for public Axon Relay services.
+
+- **Unrecognized/Unsupported Standard Packets (Violating Negotiated Version):**
+
+  If a party receives a standard packet type not defined in the protocol version agreed upon during handshake, it **SHOULD** attempt to send a `NACK` (`original_packet_type` = offending type, `error_code = ErrorCode::UnsupportedStandardPacketType (0xF2)`). The connection **SHOULD NOT** be terminated by the receiver solely for a single instance; persistent sending may lead to termination by other mechanisms (e.g. rate limiting).
 
 #### 4.4.10. **Strict Adherence to Standard Format**
 
@@ -308,10 +344,10 @@ Messages sent via `DIRECT_SEND` or `FAST_SEND` (effectively TTL `0`, relayed wit
 
 #### 4.7.2. Handshake for Version Negotiation
 
-- Implementations **SHOULD** establish the protocol version during an initial handshake between a Client and an Axon Relay.
-- The Client typically initiates by stating the highest protocol version it supports.
-- The Axon Relay responds with the protocol version it will use (less than or equal to Client's offer and Relay's max).
-- If no common version, Relay sends `NACK` (`original_packet_type = PacketType::Nack (0xFF)`, `error_code = ErrorCode::ProtocolVersionMismatch (0x01)`) and both parties MUST close.
+- The protocol version and message format are chosen by the Client **before** initiating a handshake, typically by selecting the appropriate Axon Relay endpoint (e.g., via DNS subdomain as described in section 5.1).
+- Both Client and Axon Relay **MUST** use the protocol version and message format associated with the chosen endpoint from the outset.
+- If either party detects a mismatch in protocol version or message format during the handshake, this is an immediate protocol violation.
+- Upon detecting such a mismatch, the Axon Relay _may_ send a `NACK` (`original_packet_type = PacketType::Nack (0xFF)`, `error_code = ErrorCode::ProtocolVersionMismatch (0x01)`) and both parties **MUST** immediately close the connection.
 
 #### 4.7.3. Handling Different Versions
 
@@ -612,13 +648,12 @@ pub struct DirectSend {
 ---
 **6.3.12. `DIRECT_SEND_ACK` (Type 11) - Optional Feature**
 
-- Acknowledges initiation of `DIRECT_SEND` relay attempt. Errors via `NACK`.
+- Acknowledges successful initiation of `DIRECT_SEND` relay attempt.
 
 ```rust
 // Body structure after the 1-byte PacketType header:
 pub struct DirectSendAck {
     pub idempotency_key: u32, // (4 bytes) Mirrored from DIRECT_SEND.
-    pub message_id: u64,      // (8 bytes) The message_id that will be used in the relayed MSG packet. This MUST be 0 for DIRECT_SEND.
 }
 ```
 
