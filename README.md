@@ -262,9 +262,13 @@ Client applications must be prepared to handle duplicate or out-of-order `MSG` p
 
   If a party receives a packet with `PacketType` MSB=1 (values 128-254) and this type has not been negotiated or is not supported, it **SHOULD** attempt to send a `NACK` (`original_packet_type` = offending type, `error_code = ErrorCode::UnsupportedNonStandardPacketType (0xF3)`) and then **SHOULD** terminate the connection. This is especially recommended for public Axon Relay services.
 
-- **Unrecognized/Unsupported Standard Packets (Violating Negotiated Version):**
+- **Unrecognized/Unsupported Standard Packets (Violating Version):**
 
-  If a party receives a standard packet type not defined in the protocol version agreed upon during handshake, it **SHOULD** attempt to send a `NACK` (`original_packet_type` = offending type, `error_code = ErrorCode::UnsupportedStandardPacketType (0xF2)`). The connection **SHOULD NOT** be terminated by the receiver solely for a single instance; persistent sending may lead to termination by other mechanisms (e.g. rate limiting).
+  If a party receives a standard packet type not defined in the protocol version associated with the endpoint, it **SHOULD** attempt to send a `NACK` (`original_packet_type` = offending type, `error_code = ErrorCode::UnsupportedStandardPacketType (0xF2)`) in the transport layer. The connection **SHOULD NOT** be terminated by the receiver solely for a single instance; persistent sending may lead to termination by other mechanisms (e.g. rate limiting).
+
+- **Protocol Version or Format Mismatch During Handshake:**
+
+  If a protocol version or message format mismatch is detected during handshake, the Axon Relay **MUST** send a `NACK` (`original_packet_type = PacketType::Nack (0xFF)`, `error_code = ErrorCode::ProtocolVersionMismatch (0x01)`) in the transport layer and then **MUST** close the connection. The Client **MUST** also close the connection upon receiving this error.
 
 #### 4.4.10. **Strict Adherence to Standard Format**
 
@@ -345,14 +349,16 @@ Messages sent via `DIRECT_SEND` or `FAST_SEND` (effectively TTL `0`, relayed wit
 #### 4.7.2. Handshake for Version Negotiation
 
 - The protocol version and message format are chosen by the Client **before** initiating a handshake, typically by selecting the appropriate Axon Relay endpoint (e.g., via DNS subdomain as described in section 5.1).
+- The handshake **MUST explicitly include** the protocol version (and, if applicable, message format) being used. Both Client and Axon Relay **MUST** check these fields during handshake.
 - Both Client and Axon Relay **MUST** use the protocol version and message format associated with the chosen endpoint from the outset.
 - If either party detects a mismatch in protocol version or message format during the handshake, this is an immediate protocol violation.
-- Upon detecting such a mismatch, the Axon Relay _may_ send a `NACK` (`original_packet_type = PacketType::Nack (0xFF)`, `error_code = ErrorCode::ProtocolVersionMismatch (0x01)`) and both parties **MUST** immediately close the connection.
+- Upon detecting such a mismatch, the Axon Relay **MUST** send a `NACK` (`original_packet_type = PacketType::Nack (0xFF)`, `error_code = ErrorCode::ProtocolVersionMismatch (0x01)`) in the transport layer, and then **MUST** close the connection. The Client **MUST** also close the connection upon receiving this error.
 
 #### 4.7.3. Handling Different Versions
 
-- Newer versions should gracefully interact with older versions by restricting to common features negotiated via handshake.
-- Parties should handle unrecognized standard packets not part of the negotiated version as per section 4.4.9.
+- If a version or format mismatch is detected during handshake, the Axon Relay **MUST** send a `NACK` (`original_packet_type = PacketType::Nack (0xFF)`, `error_code = ErrorCode::ProtocolVersionMismatch (0x01)`) in the transport layer and then **MUST** close the connection. The Client **MUST** also close the connection upon receiving this error.
+- Implementations **MUST NOT** retain code paths for compatibility with older or future protocol versions. The protocol’s minimalistic design requires that only the current version’s logic is implemented. This avoids code bloat and maintenance complexity.
+- The version and format are checked before connection establishment, so mismatches are prevented at the handshake. If a mismatch is detected, it is a protocol violation and the connection is terminated. No compatibility shims or fallback logic should be present.
 
 #### 4.7.4. Negotiation for Optional Standard Features and Non-Standard Packet Types
 
@@ -391,6 +397,8 @@ Axon Relay endpoints **MUST** embed the protocol version, a specific revision/bu
 - **Full Domain Structure:**
   - Binary Wire Format: `[version]-[revision]-[transport].your-axon-relay-service.com`
   - Alternative Message Format: `[version]-[revision]-[transport]-[messageformat].your-axon-relay-service.com`
+
+**The protocol version and message format are determined by the DNS label and are not negotiated after connection. The handshake MUST include the version and format for mismatch detection.**
 
 #### 5.1.2. **Components within the Label**
 
