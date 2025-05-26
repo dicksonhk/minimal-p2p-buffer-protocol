@@ -357,9 +357,8 @@ Messages sent via `DIRECT_SEND` or `FAST_SEND` (effectively TTL `0`, relayed wit
 #### 4.7.3. Handling Different Versions
 
 - If a version or format mismatch is detected during handshake, the Axon Relay **MUST** send a `NACK` (`original_packet_type = PacketType::Nack (0xFF)`, `error_code = ErrorCode::ProtocolVersionMismatch (0x01)`) in the transport layer and then **MUST** close the connection. The Client **MUST** also close the connection upon receiving this error.
-- Implementations **MUST NOT** retain code paths for compatibility with older or future protocol versions. The protocol’s minimalistic design requires that only the current version’s logic is implemented. This avoids code bloat and maintenance complexity.
-- The version and format are checked before connection establishment, so mismatches are prevented at the handshake. If a mismatch is detected, it is a protocol violation and the connection is terminated. No compatibility shims or fallback logic should be present.
-
+- Implementations **MUST NOT** retain code paths for compatibility with older or future protocol versions. Supporting multiple protocol versions within the same codebase leads to unnecessary complexity and violates the minimalistic design goal of the Axon Protocol.
+- Version checking is performed before connection establishment by endpoint selection and confirmed during handshake, which already prevents protocol version mismatches. Each deployment should only implement the specific protocol version it is intended to serve.
 #### 4.7.4. Negotiation for Optional Standard Features and Non-Standard Packet Types
 
 - Support for optional standard features (e.g., `DIRECT_SEND`, `FAST_SEND` operations) and any intended use of non-standard packet types (`PacketType` values 128-254) **SHOULD** be established or negotiated during the handshake. An Axon Relay is not obligated to support all optional features.
